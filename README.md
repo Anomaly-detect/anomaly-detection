@@ -47,6 +47,8 @@ Anomaly-Detection/
 │   ├── app.py                      # Main entrypoint to launch Streamlit UI
 │   ├── Makefile                    # Make command shortcuts (run, install, clean, etc.)
 │   ├── requirements.txt            # Python package dependencies
+│   ├── scripts/
+│   │   └── download_checkpoint.py  # Checkpoint download script (MinIO / S3)
 │   ├── website_interface/
 │   │   ├── __init__.py
 │   │   ├── ui.py                   # UI layout, CSS styles, dual player & inference hook
@@ -117,15 +119,21 @@ make ui PORT=8080 HOST=127.0.0.1
 
 ## 🛠️ Makefile Usage
 
-The `Makefile` is dedicated to running the Streamlit UI:
+The `Makefile` simplifies launching the UI and managing pretrained model weights:
 
 ```bash
-make ui           # Starts UI on http://localhost:8501
-make ui PORT=8080 # Starts UI on custom port 8080
+# UI Commands
+make ui                    # Starts UI on http://localhost:8501
+make ui PORT=8080          # Starts UI on custom port 8080
+
+# Checkpoint Download Commands (MinIO / S3)
+make checkpoint            # Downloads wider_resnet38.pth pretrained weights (verifies MD5)
+make checkpoint FORCE=1    # Forces re-download and verification
+make help                  # Displays all available make targets
 ```
 
 > [!TIP]
-> You can run `make ui` from either the root directory or inside the `anomaly-detection/` subdirectory.
+> You can run `make ui` and `make checkpoint` from either the root directory or inside the `anomaly-detection/` subdirectory.
 
 ---
 
