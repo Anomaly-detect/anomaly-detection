@@ -1,1 +1,23 @@
 UCSD_Anomaly_Dataset.v1p2/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Temporary files & caches
+.pytest_cache/
+.mypy_cache/
+*.tmp
+
+# Model checkpoints & weights (downloaded via `make checkpoint`)
+*.pth
+*.pt
+*.onnx
+*.weights
+!checkpoints/.gitkeep
