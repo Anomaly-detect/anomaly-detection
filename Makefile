@@ -1,7 +1,7 @@
-PYTHON ?= python3
+PYTHON ?= python
 PORT ?= 8501
 HOST ?= 0.0.0.0
-CHECKPOINT_URL ?= https://minio1.webtui.vn:9000/browser/bucket-vmt/checkpoint%2Fwider_resnet38.pth
+CHECKPOINT_URL ?= https://minio1.webtui.vn:9000/bucket-vmt/checkpoint/wider_resnet38.pth
 CHECKPOINT_DIR ?= checkpoints
 FORCE ?= 0
 
@@ -11,7 +11,7 @@ FORCE ?= 0
 
 ui:
 	@echo "==> Launching Video Anomaly Detection UI on $(HOST):$(PORT)..."
-	streamlit run app.py --server.port=$(PORT) --server.address=$(HOST)
+	@$(PYTHON) -m streamlit run app.py --server.port=$(PORT) --server.address=$(HOST)
 
 checkpoint:
 	@$(PYTHON) scripts/download_checkpoint.py --url "$(CHECKPOINT_URL)" --dest "$(CHECKPOINT_DIR)" $(if $(filter 1 true TRUE yes YES,$(FORCE)),--force,)

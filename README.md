@@ -203,7 +203,8 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 Or run directly via python module:
 ```bash
-python3 -m streamlit run app.py
+python -m streamlit run app.py   # Windows / Conda / venv
+# or: python3 -m streamlit run app.py
 ```
 
 ### 2. Video codec issues in browser player

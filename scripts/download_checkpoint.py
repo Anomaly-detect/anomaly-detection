@@ -13,13 +13,26 @@ Supports:
 import argparse
 import hashlib
 import os
+import shutil
 import sys
 import time
 import urllib.parse
 import urllib.request
 import urllib.error
 
-DEFAULT_CHECKPOINT_URL = "https://minio1.webtui.vn:9000/browser/bucket-vmt/checkpoint%2Fwider_resnet38.pth"
+# Ensure stdout/stderr does not crash on terminals with legacy code pages (e.g. cp1252 on Windows)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+DEFAULT_CHECKPOINT_URL = "https://minio1.webtui.vn:9000/bucket-vmt/checkpoint/wider_resnet38.pth"
 DEFAULT_MD5 = "64326bc674b23d7015924a135eca3ae9"
 DEFAULT_FILENAME = "wider_resnet38.pth"
 
@@ -129,8 +142,8 @@ def download_checkpoint(
         print(f"[*] Found existing file ({format_size(local_size)}). Verifying checksum...")
         local_md5 = compute_file_md5(target_file)
         if expected_md5 and local_md5.lower() == expected_md5.lower():
-            print(f"[✓] Checkpoint already exists and matches expected MD5: {local_md5}")
-            print(f"[✓] Path: {target_file}")
+            print(f"[OK] Checkpoint already exists and matches expected MD5: {local_md5}")
+            print(f"[OK] Path: {target_file}")
             print("==================================================")
             return target_file
         elif expected_md5:
@@ -139,7 +152,7 @@ def download_checkpoint(
             print(f"    Expected: {expected_md5}")
             print("[*] Re-downloading checkpoint...")
         else:
-            print(f"[✓] Existing file verified (MD5: {local_md5})")
+            print(f"[OK] Existing file verified (MD5: {local_md5})")
             return target_file
 
     # Step 2: Prepare request and connect
@@ -226,16 +239,30 @@ def download_checkpoint(
         print(f"        Expected  : {target_md5}", file=sys.stderr)
         sys.exit(1)
 
-    # Step 4: Atomic file move
+    # Step 4: Atomic file move with retries (guards against temporary Windows AV / indexer locks)
     if os.path.exists(target_file):
-        os.remove(target_file)
-    os.rename(temp_file, target_file)
+        try:
+            os.remove(target_file)
+        except OSError:
+            pass
+
+    moved = False
+    for attempt in range(5):
+        try:
+            os.replace(temp_file, target_file)
+            moved = True
+            break
+        except (PermissionError, OSError):
+            time.sleep(0.5)
+
+    if not moved:
+        shutil.move(temp_file, target_file)
 
     total_time = time.time() - start_time
     avg_speed = downloaded_bytes / total_time if total_time > 0 else 0
-    print(f"[✓] Download completed successfully in {format_time(total_time)} ({format_size(avg_speed)}/s)")
-    print(f"[✓] MD5: {downloaded_md5}")
-    print(f"[✓] Saved to: {target_file}")
+    print(f"[OK] Download completed successfully in {format_time(total_time)} ({format_size(avg_speed)}/s)")
+    print(f"[OK] MD5: {downloaded_md5}")
+    print(f"[OK] Saved to: {target_file}")
     print("==================================================")
     return target_file
 

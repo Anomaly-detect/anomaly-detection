@@ -6,6 +6,7 @@ Contains all user interface components, CSS styles, and synchronized dual player
 """
 
 import os
+import sys
 import time
 import tempfile
 import base64
@@ -16,87 +17,64 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+# Ensure project root is available
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # ==============================================================================
-# 1. Model Inference Pipeline Hook
+# 1. Model Inference Pipeline Hook (ASTNet - ped2_wresnet)
 # ==============================================================================
-def run_anomaly_detection(video_path: str, threshold: float = 0.5):
+PED2_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "ped2_wresnet.yaml")
+PED2_CHECKPOINT_PATH = os.path.join(PROJECT_ROOT, "checkpoints", "ped2.pth")
+
+
+@st.cache_resource(show_spinner=False)
+def get_astnet_detector(
+    config_path: str = PED2_CONFIG_PATH,
+    checkpoint_path: str = PED2_CHECKPOINT_PATH,
+    reload_key: str = "v6_triple_predicted_frame",
+):
     """
-    Hook your deep learning anomaly detection model here.
-    
+    Cached detector singleton instance so model weights stay in GPU VRAM across reruns.
+    Strictly locked to the ped2_wresnet configuration.
+    """
+    import importlib
+    import src.detector
+    import src.prediction_error_heatmap
+    import src.predicted_frame
+    importlib.reload(src.detector)
+    importlib.reload(src.prediction_error_heatmap)
+    importlib.reload(src.predicted_frame)
+    from src.detector import ASTNetDetector
+
+    return ASTNetDetector(config_path=config_path, checkpoint_path=checkpoint_path)
+
+
+def run_anomaly_detection(video_path: str, threshold: float = 0.5, progress_callback=None):
+    """
+    Deep learning anomaly detection model execution using ASTNet with ped2_wresnet config.
+
     Args:
         video_path: Path to the uploaded video file.
         threshold: Anomaly score decision threshold (0.0 to 1.0).
-        
+        progress_callback: Optional callable for live progress bar updates.
+
     Returns:
         dict containing processed_video_path, timestamps, scores, peak_score, etc.
     """
-    start_time = time.time()
+    detector = get_astnet_detector(
+        config_path=PED2_CONFIG_PATH,
+        checkpoint_path=PED2_CHECKPOINT_PATH,
+        reload_key="v6_triple_predicted_frame",
+    )
+    return detector.predict_video(
+        video_path=video_path,
+        threshold=threshold,
+        batch_size=4,
+        progress_callback=progress_callback,
+    )
 
-    cap = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0 or np.isnan(fps):
-        fps = 30.0
-    if total_frames <= 0:
-        total_frames = 150
-    duration = total_frames / fps
-    cap.release()
-
-    frames = list(range(total_frames))
-    timestamps = [round(f / fps, 2) for f in frames]
-
-    # Model inference baseline
-    cap = cv2.VideoCapture(video_path)
-    sample_stride = max(1, total_frames // 300)
-    sample_scores = []
-    sample_indices = []
-    prev_gray = None
-
-    f_idx = 0
-    while cap.isOpened() and f_idx < total_frames:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if f_idx % sample_stride == 0:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, (160, 90))
-            if prev_gray is not None:
-                diff = cv2.absdiff(gray, prev_gray)
-                score_val = float(np.mean(diff)) / 255.0
-            else:
-                score_val = 0.05
-            prev_gray = gray
-            sample_scores.append(score_val)
-            sample_indices.append(f_idx)
-        f_idx += 1
-    cap.release()
-
-    if sample_scores:
-        s_min, s_max = min(sample_scores), max(sample_scores)
-        if s_max > s_min:
-            sample_scores = [(s - s_min) / (s_max - s_min) for s in sample_scores]
-        else:
-            sample_scores = [0.1 for _ in sample_scores]
-        scores = np.interp(frames, sample_indices, sample_scores).tolist()
-        scores = [round(float(s), 4) for s in scores]
-    else:
-        scores = [0.0] * total_frames
-
-    inference_duration = time.time() - start_time
-    peak_score = max(scores) if scores else 0.0
-
-    return {
-        "processed_video_path": video_path,  # Replace with annotated video path
-        "timestamps": timestamps,
-        "scores": scores,
-        "peak_score": peak_score,
-        "is_anomaly": peak_score >= threshold,
-        "fps": fps,
-        "total_frames": total_frames,
-        "duration": duration,
-        "inference_time": inference_duration,
-    }
 
 
 # ==============================================================================
@@ -146,6 +124,35 @@ def apply_custom_styles():
             font-weight: 500;
         }
 
+        .model-badge-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-top: 0.85rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .model-badge-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            background: #F8FAFC;
+            border: 1px solid #E2E8F0;
+            border-radius: 9999px;
+            padding: 0.28rem 0.75rem;
+            font-size: 0.775rem;
+            color: #475569;
+            font-weight: 600;
+        }
+
+        .model-badge-item.active {
+            background: #EFF6FF;
+            border-color: #BFDBFE;
+            color: #1D4ED8;
+        }
+
         /* Unified Card System using Streamlit container border wrapper */
         [data-testid="stVerticalBlockBorderWrapper"] {
             background: #FFFFFF !important;
@@ -154,6 +161,19 @@ def apply_custom_styles():
             box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05) !important;
             margin-bottom: 1.75rem !important;
             padding: 0.5rem !important;
+        }
+
+        /* Remove outermost wrapper border, background, shadow, and padding inside columns (such as KPI metric cards and controls) */
+        [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="column"] [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stColumn"] > div,
+        [data-testid="column"] > div {
+            background: transparent !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            margin-bottom: 0 !important;
         }
 
         .card-top-header {
@@ -340,8 +360,14 @@ def apply_custom_styles():
         }
 
         /* Buttons */
-        div.stButton > button[data-testid="stBaseButton-primary"],
+        div.stButton > button,
         div.stButton > button:first-child {
+            box-shadow: none !important;
+            filter: none !important;
+        }
+
+        div.stButton > button[data-testid="stBaseButton-primary"],
+        div.stButton > button[kind="primary"] {
             background: linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%) !important;
             color: #FFFFFF !important;
             font-weight: 700 !important;
@@ -349,28 +375,63 @@ def apply_custom_styles():
             border: none !important;
             border-radius: 10px !important;
             padding: 0.65rem 1.75rem !important;
-            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35) !important;
+            box-shadow: none !important;
+            filter: none !important;
             transition: all 0.2s ease-in-out !important;
         }
 
         div.stButton > button[data-testid="stBaseButton-primary"]:hover,
-        div.stButton > button:first-child:hover {
+        div.stButton > button[kind="primary"]:hover {
             background: linear-gradient(135deg, #1E40AF 0%, #1D4ED8 100%) !important;
-            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45) !important;
+            box-shadow: none !important;
+            filter: none !important;
             transform: translateY(-1px) !important;
         }
 
-        div.stButton > button[data-testid="stBaseButton-secondary"] {
+        div.stButton > button[data-testid="stBaseButton-secondary"],
+        div.stButton > button[kind="secondary"] {
             background: #FFFFFF !important;
             color: #1E40AF !important;
             border: 1px solid #CBD5E1 !important;
             border-radius: 10px !important;
             font-weight: 600 !important;
+            box-shadow: none !important;
+            filter: none !important;
         }
 
-        div.stButton > button[data-testid="stBaseButton-secondary"]:hover {
+        div.stButton > button[data-testid="stBaseButton-secondary"]:hover,
+        div.stButton > button[kind="secondary"]:hover {
             background: #F1F5F9 !important;
             border-color: #94A3B8 !important;
+            box-shadow: none !important;
+            filter: none !important;
+        }
+
+        div.stButton > button:focus,
+        div.stButton > button:active,
+        div.stButton > button:focus-visible {
+            box-shadow: none !important;
+            filter: none !important;
+            outline: none !important;
+        }
+
+        /* Material Icons inside Buttons */
+        div.stButton > button [data-testid="stIconMaterial"] {
+            font-size: 1.25rem !important;
+            line-height: 1 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+
+        div.stButton > button[data-testid="stBaseButton-primary"] [data-testid="stIconMaterial"],
+        div.stButton > button[kind="primary"] [data-testid="stIconMaterial"] {
+            color: #FFFFFF !important;
+        }
+
+        div.stButton > button[data-testid="stBaseButton-secondary"] [data-testid="stIconMaterial"],
+        div.stButton > button[kind="secondary"] [data-testid="stIconMaterial"] {
+            color: #1E40AF !important;
         }
 
         /* Slider */
@@ -399,14 +460,57 @@ def apply_custom_styles():
 # ==============================================================================
 # 3. Synchronized Dual Video Player Component
 # ==============================================================================
+def ensure_h264_compatible(video_path: str) -> str:
+    """
+    Ensures video is encoded in standard H.264 (libx264/yuv420p) with faststart
+    so that Google Chrome, Edge, and Firefox HTML5 video tags can play it cleanly
+    without black screens or unsupported codec errors.
+    """
+    if not video_path or not os.path.exists(video_path):
+        return video_path
+    try:
+        import subprocess
+        import imageio_ffmpeg
+
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        base_name, _ = os.path.splitext(video_path)
+        h264_path = f"{base_name}_web.mp4"
+
+        # If converted copy already exists and is newer than source, reuse it
+        if os.path.exists(h264_path) and os.path.getmtime(h264_path) >= os.path.getmtime(video_path):
+            return h264_path
+
+        cmd = [
+            ffmpeg_exe,
+            "-y",
+            "-i", video_path,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-preset", "veryfast",
+            h264_path,
+        ]
+        res = subprocess.run(cmd, capture_output=True)
+        if res.returncode == 0 and os.path.exists(h264_path):
+            return h264_path
+    except Exception:
+        pass
+    return video_path
+
+
 def render_synchronized_dual_video(video_left_path: str, video_right_path: str, fps: float = 30.0):
     """
     Renders an HTML5 dual video player with unified synchronized Play, Pause,
-    Seek, Frame-Stepping, and Speed controls keeping both streams in lockstep.
+    Seek, Frame-Stepping, and Speed controls keeping both streams in lockstep:
+    1. Raw Video (Bounding Box)
+    2. Prediction Error Heatmap
     """
-    with open(video_left_path, "rb") as f:
+    v_left_play = ensure_h264_compatible(video_left_path)
+    v_right_play = ensure_h264_compatible(video_right_path)
+
+    with open(v_left_play, "rb") as f:
         v_left_b64 = base64.b64encode(f.read()).decode("utf-8")
-    with open(video_right_path, "rb") as f:
+    with open(v_right_play, "rb") as f:
         v_right_b64 = base64.b64encode(f.read()).decode("utf-8")
 
     html_code = f"""
@@ -431,6 +535,12 @@ def render_synchronized_dual_video(video_left_path: str, video_right_path: str, 
         grid-template-columns: 1fr 1fr;
         gap: 1rem;
         margin-bottom: 0.85rem;
+      }}
+
+      @media (max-width: 992px) {{
+        .videos-grid {{
+          grid-template-columns: 1fr;
+        }}
       }}
 
       .video-panel {{
@@ -470,7 +580,7 @@ def render_synchronized_dual_video(video_left_path: str, video_right_path: str, 
       }}
 
       .badge-blue {{ background: #1D4ED8; color: #FFFFFF; }}
-      .badge-purple {{ background: #6366F1; color: #FFFFFF; }}
+      .badge-red {{ background: #DC2626; color: #FFFFFF; }}
 
       video {{
         width: 100%;
@@ -552,20 +662,6 @@ def render_synchronized_dual_video(video_left_path: str, video_right_path: str, 
         height: 6px;
       }}
 
-      .sync-pill {{
-        background: #EFF6FF;
-        border: 1px solid #BFDBFE;
-        color: #1D4ED8;
-        font-size: 0.725rem;
-        font-weight: 700;
-        padding: 0.28rem 0.65rem;
-        border-radius: 9999px;
-        display: flex;
-        align-items: center;
-        gap: 0.35rem;
-        white-space: nowrap;
-      }}
-
       .speed-select {{
         background: #FFFFFF;
         border: 1px solid #CBD5E1;
@@ -581,22 +677,20 @@ def render_synchronized_dual_video(video_left_path: str, video_right_path: str, 
     <body>
       <div class="dual-player-box">
         <div class="videos-grid">
-          <!-- Left: Original Video -->
+          <!-- Left: Original Video with Bounding Box -->
           <div class="video-panel">
             <div class="video-panel-header">
-              <span class="video-panel-title">🎥 Original Input Video</span>
-              <span class="badge-tag badge-blue">Raw Stream</span>
+              <span class="video-panel-title">Raw Video (Bounding Box)</span>
             </div>
             <video id="vid-left" playsinline muted preload="auto">
               <source src="data:video/mp4;base64,{v_left_b64}" type="video/mp4">
             </video>
           </div>
 
-          <!-- Right: Processed Video -->
+          <!-- Right: Model Output (Prediction Error Heatmap) -->
           <div class="video-panel">
             <div class="video-panel-header">
-              <span class="video-panel-title">🔍 Processed / Annotated Video</span>
-              <span class="badge-tag badge-purple">Model Output</span>
+              <span class="video-panel-title">Prediction Error Heatmap</span>
             </div>
             <video id="vid-right" playsinline muted preload="auto">
               <source src="data:video/mp4;base64,{v_right_b64}" type="video/mp4">
@@ -614,8 +708,6 @@ def render_synchronized_dual_video(video_left_path: str, video_right_path: str, 
           <div class="scrubber-wrap">
             <input type="range" id="seek-bar" class="scrubber" min="0" max="100" value="0" step="0.03">
           </div>
-
-          <span class="sync-pill">🔗 Synchronized</span>
           
           <select id="speed-select" class="speed-select" title="Playback Speed">
             <option value="0.5">0.5x</option>
@@ -741,6 +833,11 @@ def render_synchronized_dual_video(video_left_path: str, video_right_path: str, 
     components.html(html_code, height=450)
 
 
+# Alias for backward compatibility
+render_synchronized_triple_video = render_synchronized_dual_video
+
+
+
 # ==============================================================================
 # 4. Main Page Rendering
 # ==============================================================================
@@ -748,7 +845,6 @@ def main():
     # Page Configuration
     st.set_page_config(
         page_title="Anomaly Detection Studio",
-        page_icon="🛡️",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
@@ -764,12 +860,22 @@ def main():
     if "uploaded_video_name" not in st.session_state:
         st.session_state.uploaded_video_name = None
 
-    # Centered Title
+    import torch
+    device_tag = "CUDA:0 (GPU)" if torch.cuda.is_available() else "CPU"
+
+    # Centered Title & Architecture Badge Bar
     st.markdown(
-        """
+        f"""
         <div class="app-header-center">
             <h1 class="app-header-title">Anomaly detection</h1>
-            <p class="app-header-subtitle">Real-time Video Anomaly Scoring & Temporal Localization</p>
+            <div class="model-badge-bar">
+                <span class="model-badge-item">⚙️ Config: <b>ped2_wresnet.yaml</b></span>
+                <span class="model-badge-item">🧠 Model: <b>ASTNet (WideResNet-38)</b></span>
+                <span class="model-badge-item">🎯 Dataset: <b>UCSD Ped2</b></span>
+                <span class="model-badge-item">📦 Weights: <b>checkpoints/ped2.pth</b></span>
+                <span class="model-badge-item">⚡ Device: <b>{device_tag}</b></span>
+                <span class="model-badge-item">📐 Input: <b>224 × 288 px (T=4)</b></span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -781,7 +887,6 @@ def main():
             """
             <div class="card-top-header">
                 <div class="card-main-title">📥 Video Input & Detection Configuration</div>
-                <div class="card-main-desc">Drop your surveillance video and configure the anomaly scoring threshold inside a single unified workspace.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -794,14 +899,22 @@ def main():
             label_visibility="collapsed",
         )
 
+        display_video_name = None
+        display_video_size = None
         if uploaded_file is not None:
-            file_size_mb = uploaded_file.size / (1024 * 1024)
+            display_video_name = uploaded_file.name
+            display_video_size = f"{uploaded_file.size / (1024 * 1024):.2f} MB"
+        elif st.session_state.uploaded_video_name is not None and st.session_state.uploaded_video_path and os.path.exists(st.session_state.uploaded_video_path):
+            display_video_name = st.session_state.uploaded_video_name
+            display_video_size = f"{os.path.getsize(st.session_state.uploaded_video_path) / (1024 * 1024):.2f} MB"
+
+        if display_video_name:
             st.markdown(
                 f"""
                 <div class="file-chip">
-                    <span>🎥 <b>File:</b> {uploaded_file.name}</span>
+                    <span>🎥 <b>File:</b> {display_video_name}</span>
                     <span>•</span>
-                    <span>{file_size_mb:.2f} MB</span>
+                    <span>{display_video_size}</span>
                     <span>•</span>
                     <span style="color: #16A34A;">✓ Ready for Analysis</span>
                 </div>
@@ -812,7 +925,7 @@ def main():
         st.markdown('<div class="card-divider"></div>', unsafe_allow_html=True)
 
         # Parameter Controls row inside the Unified Card
-        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2.5, 1, 1], vertical_alignment="bottom")
+        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2.4, 1.0, 1.0], vertical_alignment="bottom")
 
         with col_ctrl1:
             threshold = st.slider(
@@ -825,10 +938,20 @@ def main():
             )
 
         with col_ctrl2:
-            analyze_clicked = st.button("▶ Analyze Video", type="primary", use_container_width=True)
+            analyze_clicked = st.button(
+                "Phân tích",
+                icon=":material/play_arrow:",
+                type="primary",
+                use_container_width=True,
+            )
 
         with col_ctrl3:
-            reset_clicked = st.button("🔄 Reset Studio", type="secondary", use_container_width=True)
+            reset_clicked = st.button(
+                "Reset",
+                icon=":material/refresh:",
+                type="secondary",
+                use_container_width=True,
+            )
 
     # Reset Action
     if reset_clicked:
@@ -852,17 +975,27 @@ def main():
         if st.session_state.uploaded_video_path is None:
             st.warning("⚠️ Please drop a video into the upload zone first.")
         else:
-            with st.status("Analyzing video with anomaly detection model...", expanded=True) as status:
-                st.write("🔍 Decoding video streams and frame rates...")
-                time.sleep(0.35)
-                st.write("🧠 Extracting spatiotemporal feature embeddings...")
-                time.sleep(0.4)
-                st.write("📈 Computing temporal anomaly distribution curve...")
-                res = run_anomaly_detection(st.session_state.uploaded_video_path, threshold=threshold)
-                status.update(label="Inference complete!", state="complete", expanded=False)
+            status_text = st.empty()
+            status_text.write("Đang khởi tạo model")
 
-            st.session_state.results = res
-            st.rerun()
+            def update_ui_progress(current, total=None):
+                if total is not None:
+                    status_text.write(f"{current}/{total}")
+                else:
+                    status_text.write(str(current))
+
+            try:
+                res = run_anomaly_detection(
+                    st.session_state.uploaded_video_path,
+                    threshold=threshold,
+                    progress_callback=update_ui_progress,
+                )
+                status_text.empty()
+                st.session_state.results = res
+                st.rerun()
+            except Exception as e:
+                status_text.empty()
+                st.error(f"Đã xảy ra lỗi trong quá trình suy luận: {str(e)}")
 
     # Results Dashboard
     if st.session_state.results is not None:
@@ -930,11 +1063,35 @@ def main():
 
         st.markdown("<div style='height: 1.25rem;'></div>", unsafe_allow_html=True)
 
-        # Synchronized Dual Video Display Screens
-        if os.path.exists(st.session_state.uploaded_video_path) and os.path.exists(res["processed_video_path"]):
+        # Synchronized Dual Video Display Screens (Raw Video | Error Heatmap)
+        annotated_video_path = res.get("annotated_video_path", res.get("processed_video_path"))
+        heatmap_video_path = res.get("heatmap_video_path")
+
+        base_name = ""
+        if st.session_state.uploaded_video_path:
+            base_name = os.path.splitext(os.path.basename(st.session_state.uploaded_video_path))[0]
+        if not base_name and annotated_video_path:
+            raw_base = os.path.splitext(os.path.basename(annotated_video_path))[0]
+            base_name = raw_base.replace("_annotated_web", "").replace("_annotated", "")
+
+        # If not present in cached results, check if pre-rendered heatmap video exists in temp
+        if not heatmap_video_path or not os.path.exists(heatmap_video_path):
+            if base_name:
+                temp_candidate = os.path.join(tempfile.gettempdir(), f"{base_name}_error_heatmap.mp4")
+                if os.path.exists(temp_candidate):
+                    heatmap_video_path = temp_candidate
+                    res["heatmap_video_path"] = temp_candidate
+
+        right_video_path = (
+            heatmap_video_path
+            if (heatmap_video_path and os.path.exists(heatmap_video_path))
+            else st.session_state.uploaded_video_path
+        )
+
+        if os.path.exists(annotated_video_path) and os.path.exists(right_video_path):
             render_synchronized_dual_video(
-                video_left_path=st.session_state.uploaded_video_path,
-                video_right_path=res["processed_video_path"],
+                video_left_path=annotated_video_path,
+                video_right_path=right_video_path,
                 fps=res["fps"],
             )
 
@@ -945,9 +1102,7 @@ def main():
             st.markdown(
                 """
                 <div class="card-top-header" style="margin-bottom: 0.5rem;">
-                    <div class="card-main-title">📈 Temporal Anomaly Score Line Chart</div>
-                    <div class="card-main-desc">Real-time confidence distribution. Scores exceeding the red dashed threshold line indicate detected anomalies.</div>
-                </div>
+                    <div class="card-main-title">Temporal Anomaly Score Line Chart</div>                </div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -1032,18 +1187,7 @@ def main():
                 height=360,
             )
 
-            st.plotly_chart(fig, use_container_width=True)
-
-    # Footer
-    st.markdown(
-        """
-        <div style="text-align: center; color: #94A3B8; font-size: 0.75rem; margin-top: 2.5rem;">
-            AnomalyWatch Studio • Modern Blue & White Architecture
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+            st.plotly_chart(fig, use_container_width=True)  
 
 if __name__ == "__main__":
     main()
