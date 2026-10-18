@@ -368,13 +368,13 @@ class wrn38(nn.Module):
     def __init__(self, config, pretrained=True):
         super(wrn38, self).__init__()
         wide_resnet = wider_resnet38_a2(classes=1000, dilation=True)
-        wide_resnet = torch.nn.DataParallel(wide_resnet)
         if pretrained:
             pretrained_model = config.MODEL.PRETRAINED
             checkpoint = torch.load(pretrained_model, map_location='cpu')
-            wide_resnet.load_state_dict(checkpoint['state_dict'])
+            sd = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+            sd = {(k[7:] if k.startswith('module.') else k): v for k, v in sd.items()}
+            wide_resnet.load_state_dict(sd)
             del checkpoint
-        wide_resnet = wide_resnet.module
         # print(wide_resnet)
         self.mod1 = wide_resnet.mod1
         self.mod2 = wide_resnet.mod2
@@ -407,13 +407,13 @@ class wrn20(nn.Module):
     def __init__(self, config, pretrained=True):
         super(wrn20, self).__init__()
         wide_resnet = wider_resnet20_a2(classes=1000, dilation=True)
-        wide_resnet = torch.nn.DataParallel(wide_resnet)
         if pretrained:
             pretrained_model = config.MODEL.PRETRAINED
             checkpoint = torch.load(pretrained_model, map_location='cpu')
-            wide_resnet.load_state_dict(checkpoint['state_dict'])
+            sd = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+            sd = {(k[7:] if k.startswith('module.') else k): v for k, v in sd.items()}
+            wide_resnet.load_state_dict(sd)
             del checkpoint
-        wide_resnet = wide_resnet.module
         # print(wide_resnet)
         self.mod1 = wide_resnet.mod1
         self.mod2 = wide_resnet.mod2
@@ -474,13 +474,13 @@ class wrn38_layer6(nn.Module):
     def __init__(self, config, pretrained=True):
         super(wrn38_layer6, self).__init__()
         wide_resnet = wider_resnet38_a2(classes=1000, dilation=True)
-        wide_resnet = torch.nn.DataParallel(wide_resnet)
         if pretrained:
             pretrained_model = config.MODEL.PRETRAINED
             checkpoint = torch.load(pretrained_model, map_location='cpu')
-            wide_resnet.load_state_dict(checkpoint['state_dict'])
+            sd = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+            sd = {(k[7:] if k.startswith('module.') else k): v for k, v in sd.items()}
+            wide_resnet.load_state_dict(sd)
             del checkpoint
-        wide_resnet = wide_resnet.module
         # print(wide_resnet)
         self.mod1 = wide_resnet.mod1
         self.mod2 = wide_resnet.mod2
@@ -513,13 +513,13 @@ class wrn38_layer5(nn.Module):
     def __init__(self, config, pretrained=True):
         super(wrn38_layer5, self).__init__()
         wide_resnet = wider_resnet38_a2(classes=1000, dilation=True)
-        wide_resnet = torch.nn.DataParallel(wide_resnet)
         if pretrained:
             pretrained_model = config.MODEL.PRETRAINED
             checkpoint = torch.load(pretrained_model, map_location='cpu')
-            wide_resnet.load_state_dict(checkpoint['state_dict'])
+            sd = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+            sd = {(k[7:] if k.startswith('module.') else k): v for k, v in sd.items()}
+            wide_resnet.load_state_dict(sd)
             del checkpoint
-        wide_resnet = wide_resnet.module
         # print(wide_resnet)
         self.mod1 = wide_resnet.mod1
         self.mod2 = wide_resnet.mod2
